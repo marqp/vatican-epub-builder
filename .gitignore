@@ -1,0 +1,11 @@
+build/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.log
+.venv/
+.venv2/
+.pytest_cache/
+.ruff_cache/
+crawler_state.json
