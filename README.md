@@ -50,3 +50,8 @@ EPUB files are saved to the `epubs/` directory.
 This project is independent and is not affiliated with, endorsed by, or sponsored by the Holy See. All original encyclical texts, documents, and content are the property of the *Libreria Editrice Vaticana*. 
 
 This tool was created exclusively for educational, pastoral, and personal use to facilitate the reading of these important public documents in standard EPUB format. No commercial use is intended, permitted, or encouraged.
+
+## Créditos e Agradecimentos
+
+Este projeto foi originalmente baseado e desenvolvido a partir do trabalho excelente contido em [n2ctech/magnifica-humanitas-epub](https://github.com/n2ctech/magnifica-humanitas-epub) (e seu fork [CossackLucas/magnifica-humanitas-epub](https://github.com/CossackLucas/magnifica-humanitas-epub)). Agradecemos aos autores originais por disponibilizarem a estrutura inicial para a concepção deste gerador.
+
