@@ -2,28 +2,32 @@ name: Release EPUBs
 
 on:
   push:
-    tags:
-      - 'v*' # Dispara o workflow quando você faz push de uma tag começando com 'v' (ex: v1.0.0)
+    branches:
+      - main # Dispara automaticamente a cada novo commit na branch principal
 
 jobs:
   build-and-release:
     name: Build and Create Release
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Necessário para criar a release
+      contents: write # Necessário para criar a release e a tag
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Traz todo o histórico para poder extrair a mensagem de commit
-      
+          fetch-depth: 0 # Traz todo o histórico
+          
+      - name: Generate Automatic Version
+        id: version
+        # Usa o ID da run do GitHub Actions para criar uma versão única e incremental (ex: v1.0.1, v1.0.2)
+        run: echo "tag=v1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
       - name: Get Commit Message
         id: get_commit
         run: |
-          # Extrai a mensagem do commit que gerou a tag
+          # Extrai a mensagem do commit
           COMMIT_MSG=$(git log -1 --pretty=format:"%B")
-          # Cria um multiline output pro GitHub Actions (sintaxe nova)
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "message<<$EOF" >> $GITHUB_OUTPUT
           echo "$COMMIT_MSG" >> $GITHUB_OUTPUT
@@ -31,7 +35,6 @@ jobs:
 
       - name: Zip EPUBs Directory
         run: |
-          # Cria um arquivo zip contendo todos os EPUBs
           cd epubs
           zip -r ../vatican-encyclicals-collection.zip ./*.epub
           cd ..
@@ -39,7 +42,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Release ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
           body: |
             ## Notas da Versão
             ${{ steps.get_commit.outputs.message }}
