@@ -6,6 +6,7 @@ and derives filesystem paths from the encyclical URL structure.
 """
 
 import re
+import zipfile
 from pathlib import Path
 
 from lxml import etree
@@ -183,15 +184,48 @@ def scrape_metadata(root: etree._Element, url: str) -> None:
                         break
 
     # --- Derived paths ---
+    # Two documents can share a title and pope (Pius IX wrote two "Ubi primum"),
+    # so if the EPUB name is already taken by a different source URL, add the
+    # year (or the full date) to keep both.
+    epub_dir = Path("epubs")
+    label = config.TITLE
+    for suffix in ["", (config.DATE_ISO or "")[:4], config.DATE_ISO or ""]:
+        if suffix and suffix in label:
+            continue
+        candidate = f"{config.TITLE} ({suffix})" if suffix else config.TITLE
+        existing = _epub_source_url(
+            epub_dir / f"{candidate} - {config.AUTHOR} ({config.LANG}).epub"
+        )
+        if existing is None or _same_url(existing, url):
+            label = candidate
+            break
+
     author_slug = config.AUTHOR.lower().replace(" ", "-").replace(".", "")
-    slug = f"{config.TITLE.lower().replace(' ', '-').replace(':', '')}-{author_slug}"
+    title_slug = re.sub(r"[()]", "", label).lower().replace(" ", "-").replace(":", "")
+    slug = f"{title_slug}-{author_slug}"
 
     config.SOURCE_HTML = Path("sources") / f"vatican-{slug}.source.html"
     config.SOURCE_HTML.parent.mkdir(parents=True, exist_ok=True)
 
     config.BUILD_DIR = Path(f"build/{slug}-epub-{config.LANG}")
 
-    config.OUTPUT_EPUB = Path("epubs") / f"{config.TITLE} - {config.AUTHOR} ({config.LANG}).epub"
+    config.OUTPUT_EPUB = epub_dir / f"{label} - {config.AUTHOR} ({config.LANG}).epub"
     config.OUTPUT_EPUB.parent.mkdir(parents=True, exist_ok=True)
 
     config.PUBLISHER = _PUBLISHER.get(config.LANG, _PUBLISHER["en"])
+
+
+def _same_url(a: str, b: str) -> bool:
+    return a.replace("http://", "https://").rstrip("/") == b.replace("http://", "https://").rstrip("/")
+
+
+def _epub_source_url(path: Path) -> str | None:
+    """Return the dc:source URL of an existing EPUB, or None if there is none."""
+    if not path.exists():
+        return None
+    try:
+        with zipfile.ZipFile(path) as z:
+            opf = etree.fromstring(z.read("OEBPS/content.opf"))
+        return opf.findtext(".//{http://purl.org/dc/elements/1.1/}source") or ""
+    except Exception:
+        return ""
