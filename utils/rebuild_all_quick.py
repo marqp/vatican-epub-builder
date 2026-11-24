@@ -26,6 +26,7 @@ for src in files:
         id_map = parser.build_id_map(content)
         body, notes, toc = parser.build_content_fragments(content, id_map)
         epub.write_epub_files(body, notes, toc)
+        epub.validate_xml()
         epub.create_epub()
     except Exception as e:
         print(f"Error on {src}: {e}")

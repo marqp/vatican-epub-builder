@@ -12,6 +12,7 @@ from lxml import etree
 
 import config
 from utils import normspace
+from utils.dates import to_iso_date
 
 # ---------------------------------------------------------------------------
 # Localised label maps
@@ -31,6 +32,14 @@ _FALLBACK_AUTHOR = {
     "fr": "Souverain Pontife",
     "es": "Sumo Pontífice",
     "it": "Sommo Pontefice",
+}
+
+_PUBLISHER = {
+    "pt": "A Santa Sé",
+    "en": "The Holy See",
+    "fr": "Le Saint-Siège",
+    "es": "La Santa Sede",
+    "it": "La Santa Sede",
 }
 
 # Prefixes to strip from the <title> tag (multilingual)
@@ -72,13 +81,17 @@ def scrape_metadata(root: etree._Element, url: str) -> None:
     with the encyclical's metadata (title, author, date, paths, etc.).
     """
     config.SOURCE_URL = url
-    parts = url.strip("/").split("/")
 
-    # --- Language ---
-    lang_candidate = parts[5] if len(parts) > 5 else "pt"
-    config.LANG = lang_candidate if len(lang_candidate) == 2 else "pt"
+    # --- Language (from /content/{pope}/{lang}/...) ---
+    parts = url.split("/")
+    slug = lang = None
+    if "content" in parts:
+        idx = parts.index("content")
+        if idx + 2 < len(parts):
+            slug, lang = parts[idx + 1], parts[idx + 2]
+    config.LANG = lang if lang and re.fullmatch(r"[a-z]{2}", lang) else "pt"
 
-    labels = config.UI_LABELS.get(config.LANG, config.UI_LABELS["pt"])
+    labels = config.UI_LABELS.get(config.LANG, config.UI_LABELS["en"])
     config.COVER_KICKER = labels["cover_kicker"]
     config.TITLE_PAGE_LABEL = labels["title_page_label"]
     config.TITLE_PAGE_NAV = labels["title_page_nav"]
@@ -89,37 +102,28 @@ def scrape_metadata(root: etree._Element, url: str) -> None:
     title_node = root.xpath("//head/title")
     head_title = title_node[0].text_content().strip() if title_node else "Encyclical"
 
-    parts = url.split("/")
-    if "content" in parts:
-        idx = parts.index("content")
-        if idx + 2 < len(parts):
-            slug = parts[idx + 1]
-            lang = parts[idx + 2]
-            config.LANG = lang
+    # Always reset, so a previous document's author never leaks through
+    config.AUTHOR = _FALLBACK_AUTHOR.get(config.LANG, _FALLBACK_AUTHOR["en"])
+    if slug:
+        nodes = root.xpath(
+            f'//*[contains(@class, "breadcrumb")]//a[@href="/content/{slug}/{lang}.html"]'
+        )
+        if not nodes:
+            nodes = root.xpath(f'.//a[@href="/content/{slug}/{lang}.html"]')
 
-            nodes = root.xpath(
-                f'//*[contains(@class, "breadcrumb")]//a[@href="/content/{slug}/{lang}.html"]'
-            )
-            if not nodes:
-                nodes = root.xpath(f'.//a[@href="/content/{slug}/{lang}.html"]')
+        nodes = [
+            n
+            for n in nodes
+            if normspace(n.text_content()).lower()
+            not in ("magisterium", "calendário", "calendar", "calendario")
+        ]
 
-            nodes = [
-                n
-                for n in nodes
-                if normspace(n.text_content()).lower()
-                not in ("magisterium", "calendário", "calendar", "calendario")
-            ]
-
-            if nodes:
-                name = normspace(nodes[0].text_content())
-                prefix = _POPE_PREFIXES.get(lang, "Papa ")
-                if not name.upper().startswith(prefix.upper().strip()):
-                    name = prefix + name
-                config.AUTHOR = name
-            else:
-                config.AUTHOR = _FALLBACK_AUTHOR.get(config.LANG, "Sumo Pontífice")
-    else:
-        config.AUTHOR = _FALLBACK_AUTHOR.get(config.LANG, "Sumo Pontífice")
+        if nodes:
+            name = normspace(nodes[0].text_content())
+            prefix = _POPE_PREFIXES.get(config.LANG, "Papa ")
+            if not name.upper().startswith(prefix.upper().strip()):
+                name = prefix + name
+            config.AUTHOR = name
 
     # --- Title ---
     pope_name = config.AUTHOR
@@ -155,6 +159,7 @@ def scrape_metadata(root: etree._Element, url: str) -> None:
     # --- Date ---
     date_match = re.search(r"\((.*?)\)", head_title)
     config.DATE = date_match.group(1).strip() if date_match else ""
+    config.DATE_ISO = to_iso_date(config.DATE)
     config.COVER_DATE = config.DATE.upper()
 
     # --- Subtitle fallback (scan document for "SOBRE..." / "ON..." lines) ---
@@ -167,14 +172,12 @@ def scrape_metadata(root: etree._Element, url: str) -> None:
                 text = " ".join(t.strip() for t in p.xpath(".//text()") if t.strip())
                 if len(text) > 300:
                     continue
-                match = re.search(
-                    r"\b(SOBRE\s+.*|ON\s+.*|SUR\s+.*|SULLA\s+.*)",
-                    text,
-                    re.IGNORECASE,
-                )
+                # Real subtitles are set in capitals ("ON THE MORALITY OF DUELING");
+                # a case-insensitive match picked up body text ("... on the 23rd December")
+                match = re.search(r"\b((?:SOBRE|ON|SUR|SULLA)\s.*)", text)
                 if match:
-                    sub = match.group(1).strip()
-                    if len(sub) < 200:
+                    sub = normspace(match.group(1))
+                    if len(sub) < 200 and sub == sub.upper():
                         sub = re.sub(r"\[.*?\]|_", "", sub).strip()
                         config.SUBTITLE = sub
                         break
@@ -191,4 +194,4 @@ def scrape_metadata(root: etree._Element, url: str) -> None:
     config.OUTPUT_EPUB = Path("epubs") / f"{config.TITLE} - {config.AUTHOR} ({config.LANG}).epub"
     config.OUTPUT_EPUB.parent.mkdir(parents=True, exist_ok=True)
 
-    config.PUBLISHER = "A Santa Sé" if config.LANG == "pt" else "The Holy See"
+    config.PUBLISHER = _PUBLISHER.get(config.LANG, _PUBLISHER["en"])

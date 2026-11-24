@@ -2,8 +2,26 @@ import re
 import json
 import os
 
-# Globals for caching the encyclicals dictionary
+# Cache: title (lowercase) -> (url, compiled pattern)
 _ENCYCLICALS_DICT = None
+
+# A usable title is plain words: letters, apostrophes and single spaces
+_VALID_TITLE = re.compile(r"^[a-z']+(?: [a-z']+)*$")
+
+
+def _clean_title(basename: str) -> str | None:
+    clean = re.sub(r"^papa-francesco_\d{8}_enciclica-", "", basename)
+    clean = re.sub(r"^hf_[a-z0-9-]+_enc_\d{8}_", "", clean)
+    clean = re.sub(r"^(enciclica|encyclica)-", "", clean)
+    clean = re.sub(r"-\d{1,2}-[a-z]+-\d{4}$", "", clean)
+    clean = re.sub(r"\s+", " ", clean.replace("-", " ")).strip().lower()
+
+    # Skip leftovers of odd basenames (digits, markup, dates) and generic words
+    if not _VALID_TITLE.match(clean):
+        return None
+    if len(clean) < 4 or clean in ("carta", "lettera"):
+        return None
+    return clean
 
 
 def load_encyclicals_dict():
@@ -21,20 +39,12 @@ def load_encyclicals_dict():
             state = json.load(f)
 
         for url in state.get("queue", []):
-            basename = url.split("/")[-1].replace(".html", "")
-
-            # Clean basename to extract the title
-            clean = re.sub(r"^papa-francesco_\d{8}_enciclica-", "", basename)
-            clean = re.sub(r"^hf_[a-z0-9-]+_enc_\d{8}_", "", clean)
-            clean = re.sub(r"^(enciclica|encyclica)-", "", clean)
-            clean = re.sub(r"-\d{1,2}-[a-z]+-\d{4}$", "", clean)
-            clean = clean.replace("-", " ")
-
-            # Skip very short or generic titles
-            if len(clean) < 4 or clean in ["carta", "lettera"]:
-                continue
-
-            _ENCYCLICALS_DICT[clean.lower()] = url
+            title = _clean_title(url.split("/")[-1].replace(".html", ""))
+            if title:
+                # Single words ("caritatis", "arcanum") must be capitalised to count as a
+                # title; multi-word titles are distinctive enough in any case
+                pattern = make_accent_insensitive_regex(title, first_upper=" " not in title)
+                _ENCYCLICALS_DICT[title] = (url, re.compile(pattern))
 
     except Exception as e:
         print(f"Warning: could not load encyclicals dict for smart footnotes: {e}")
@@ -42,29 +52,42 @@ def load_encyclicals_dict():
     return _ENCYCLICALS_DICT
 
 
-def make_accent_insensitive_regex(title):
+_ACCENT_CLASSES = {
+    "a": "aáàãâä",
+    "e": "eéèêë",
+    "i": "iíìîï",
+    "o": "oóòõôö",
+    "u": "uúùûü",
+    "c": "cç",
+}
+_ACCENT_BASE = {ch: base for base, chars in _ACCENT_CLASSES.items() for ch in chars}
+
+
+def make_accent_insensitive_regex(title, first_upper: bool = False):
+    """
+    Build a regex matching *title* regardless of accents and case — except the
+    first letter, which must be uppercase when *first_upper* is set (used for
+    single-word titles, which are otherwise ordinary Latin words).
+    """
     pattern = ""
+    first = True
     for char in title:
         c = char.lower()
-        if c in "aáàãâä":
-            pattern += r"[aAáÁàÀãÃâÂäÄ]"
-        elif c in "eéèêë":
-            pattern += r"[eEéÉèÈêÊëË]"
-        elif c in "iíìîï":
-            pattern += r"[iIíÍìÌîÎïÏ]"
-        elif c in "oóòõôö":
-            pattern += r"[oOóÓòÒõÕôÔöÖ]"
-        elif c in "uúùûü":
-            pattern += r"[uUúÚùÙûÛüÜ]"
-        elif c in "cç":
-            pattern += r"[cCçÇ]"
-        elif c.isalpha():
-            pattern += f"[{c.lower()}{c.upper()}]"
+        if c.isalpha():
+            variants = _ACCENT_CLASSES.get(_ACCENT_BASE.get(c, c), c)
+            if first and first_upper:
+                pattern += f"[{variants.upper()}]"
+            else:
+                pattern += f"[{variants}{variants.upper()}]"
+            first = False
         elif c == " ":
             pattern += r"\s+"
+        elif c in "'’":
+            pattern += "['’]"
         else:
             pattern += re.escape(char)
-    return r"\b(" + pattern + r")\b"
+    # \b would fail after a trailing apostrophe ("Laudato si'"), so use lookarounds
+    return r"(?<!\w)(" + pattern + r")(?!\w)"
 
 
 def inject_smart_links(html_text: str) -> str:
@@ -120,10 +143,8 @@ def inject_smart_links(html_text: str) -> str:
                     in_a_tag = False
             else:
                 if parts[i].strip() and not in_a_tag:
-                    pattern_str = make_accent_insensitive_regex(title)
-                    pattern = re.compile(pattern_str)
+                    url, pattern = encyclicals[title]
                     if pattern.search(parts[i]):
-                        url = encyclicals[title]
                         parts[i] = pattern.sub(rf'<a href="{url}" target="_blank">\1</a>', parts[i])
                         modified = True
 

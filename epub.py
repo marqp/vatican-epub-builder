@@ -8,25 +8,40 @@ from PIL import Image, ImageDraw, ImageFont
 
 import config
 from utils import escape
+from utils.integrity import repair_links_and_ids
+
+
+_FONT_CANDIDATES = {
+    False: [
+        "/System/Library/Fonts/Supplemental/Georgia.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+        "/usr/share/fonts/liberation/LiberationSerif-Regular.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSerif.ttf",
+        "C:/Windows/Fonts/georgia.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ],
+    True: [
+        "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+        "/usr/share/fonts/liberation/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSerif-Bold.ttf",
+        "C:/Windows/Fonts/georgiab.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    ],
+}
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = [
-        "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
-        if bold
-        else "/System/Library/Fonts/Supplemental/Georgia.ttf",
-        "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf"
-        if bold
-        else "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
-        if bold
-        else "/System/Library/Fonts/Supplemental/Arial.ttf",
-    ]
-    for candidate in candidates:
+    for candidate in _FONT_CANDIDATES[bold]:
         path = Path(candidate)
         if path.exists():
             return ImageFont.truetype(str(path), size=size)
-    return ImageFont.load_default()
+    # Pillow >= 10.1 ships a scalable default font; honour the requested size
+    return ImageFont.load_default(size=size)
 
 
 def wrap_text(
@@ -285,6 +300,7 @@ img.cover {
 </section>
 {notes_section}
 """.strip()
+    content_body = repair_links_and_ids(content_body)
     (config.BUILD_DIR / "OEBPS" / "text" / "content.xhtml").write_text(
         make_xhtml(config.TITLE, content_body), encoding="utf-8"
     )
@@ -314,6 +330,17 @@ img.cover {
     (config.BUILD_DIR / "OEBPS" / "nav.xhtml").write_text(
         make_xhtml("Contents", nav_body, "styles/book.css"), encoding="utf-8"
     )
+
+    def toc_depth(entries: list[dict[str, str | int]]) -> int:
+        # Same nesting rules as the trees below
+        depth, stack = 1, [0]
+        for entry in entries:
+            level = max(1, min(int(entry.get("level", 1)), 6))
+            while stack and level <= stack[-1]:
+                stack.pop()
+            stack.append(level)
+            depth = max(depth, len(stack) - 1)
+        return depth
 
     def render_ncx_tree(entries: list[dict[str, str | int]]) -> str:
         root: list[dict[str, object]] = []
@@ -362,7 +389,7 @@ img.cover {
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
     <meta name="dtb:uid" content="{identifier}" />
-    <meta name="dtb:depth" content="3" />
+    <meta name="dtb:depth" content="{toc_depth(nav_entries)}" />
     <meta name="dtb:totalPageCount" content="0" />
     <meta name="dtb:maxPageNumber" content="0" />
   </head>
@@ -376,6 +403,7 @@ img.cover {
         encoding="utf-8",
     )
 
+    date_line = f"    <dc:date>{config.DATE_ISO}</dc:date>\n" if config.DATE_ISO else ""
     (config.BUILD_DIR / "OEBPS" / "content.opf").write_text(
         f"""<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="{config.LANG}">
@@ -385,8 +413,7 @@ img.cover {
     <dc:creator>{escape(config.AUTHOR)}</dc:creator>
     <dc:language>{config.LANG}</dc:language>
     <dc:publisher>{escape(config.PUBLISHER)}</dc:publisher>
-    <dc:date>{config.DATE}</dc:date>
-    <dc:source>{escape(config.SOURCE_URL)}</dc:source>
+{date_line}    <dc:source>{escape(config.SOURCE_URL)}</dc:source>
     <dc:description>{escape(config.SUBTITLE)}</dc:description>
     <meta property="dcterms:modified">{datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}</meta>
     <meta name="cover" content="cover-image" />

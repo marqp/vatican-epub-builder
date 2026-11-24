@@ -11,7 +11,7 @@ BASE_URL = "https://www.vatican.va"
 
 def get_html(url: str) -> html.HtmlElement:
     req = Request(url, headers={"User-Agent": "vatican-epub-crawler/1.0"})
-    with urlopen(req) as resp:
+    with urlopen(req, timeout=30) as resp:
         return html.fromstring(resp.read())
 
 
@@ -88,7 +88,7 @@ def fetch_all_encyclicals() -> list[str]:
         # "enciclica" or "encyclica". This supplements Strategy 2 to catch
         # encyclicals filed under different heading classifications.
         # Only needed for popes not found via Strategy 1 (the dedicated index).
-        strategy1_found = found and not fallback_doc
+        strategy1_found = found and fallback_doc is None
         if not strategy1_found:
             for lang in LANGUAGES:
                 main_url = f"{BASE_URL}/content/{pope}/{lang}.html"
@@ -194,11 +194,14 @@ def main():
                     prefix = "  " * (t["level"] - 1)
                     print(f"{prefix}L{t['level']}: {t['text']}")
 
-                subprocess.run(
+                result = subprocess.run(
                     [sys.executable, "vatican_epub_builder.py", "--url", url],
-                    check=True,
                     capture_output=True,
+                    text=True,
                 )
+                if result.returncode != 0:
+                    print(f"Error building EPUB for {url}:\n{result.stderr.strip()}")
+                    continue
                 print(f"-> Successfully built EPUB for {config.TITLE}")
             else:
                 print(f"Failed to find document body for {url}")
