@@ -48,6 +48,7 @@ SUBTITLE = ""
 AUTHOR = ""
 PUBLISHER = ""
 DATE = ""
+DATE_ISO: str | None = None
 LANG = "pt"
 COVER_KICKER = ""
 COVER_DATE = ""

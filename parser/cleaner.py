@@ -125,6 +125,9 @@ def sanitize_element(
             node.tag = "strong"
         elif tag == "i":
             node.tag = "em"
+        elif tag == "center":
+            # <center> is not valid XHTML5; keep the intent as a centred div
+            node.tag = "div"
 
         # Collapse whitespace
         if node.text:
@@ -160,10 +163,15 @@ def sanitize_element(
                     "href", full_url.replace("http://www.vatican.va", "https://www.vatican.va")
                 )
 
-        if text_align_center and node.tag in {"p", "div"}:
+        if (text_align_center and node.tag in {"p", "div"}) or tag == "center":
             node.set("class", "center")
 
     _clean(cleaned)
+
+    # <font> is not valid XHTML5: drop the tag, keep its content
+    if isinstance(cleaned.tag, str) and cleaned.tag.lower() == "font":
+        cleaned.tag = "span"
+    etree.strip_tags(cleaned, "font", "FONT")
     return cleaned
 
 

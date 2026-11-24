@@ -1,5 +1,6 @@
 import sys
 import json
+import argparse
 import os
 import subprocess
 from urllib.request import Request, urlopen
@@ -11,7 +12,7 @@ BASE_URL = "https://www.vatican.va"
 
 def get_html(url: str) -> html.HtmlElement:
     req = Request(url, headers={"User-Agent": "vatican-epub-crawler/1.0"})
-    with urlopen(req) as resp:
+    with urlopen(req, timeout=30) as resp:
         return html.fromstring(resp.read())
 
 
@@ -88,7 +89,7 @@ def fetch_all_encyclicals() -> list[str]:
         # "enciclica" or "encyclica". This supplements Strategy 2 to catch
         # encyclicals filed under different heading classifications.
         # Only needed for popes not found via Strategy 1 (the dedicated index).
-        strategy1_found = found and not fallback_doc
+        strategy1_found = found and fallback_doc is None
         if not strategy1_found:
             for lang in LANGUAGES:
                 main_url = f"{BASE_URL}/content/{pope}/{lang}.html"
@@ -148,7 +149,27 @@ def fetch_all_encyclicals() -> list[str]:
     return encyclical_urls
 
 
+def merge_new_urls(state: dict, urls: list[str]) -> list[str]:
+    """
+    Append URLs not yet in the queue to its end. Already-processed entries keep
+    their positions, so the next run builds only the new documents.
+    Returns the list of URLs that were added.
+    """
+    known = {u.replace("http://", "https://") for u in state["queue"]}
+    added = [u for u in urls if u.replace("http://", "https://") not in known]
+    state["queue"].extend(added)
+    return added
+
+
 def main():
+    arg_parser = argparse.ArgumentParser(description="Crawl vatican.va and build all encyclicals.")
+    arg_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="search vatican.va again and queue encyclicals not seen before",
+    )
+    args = arg_parser.parse_args()
+
     if not os.path.exists(STATE_FILE):
         print("Scraping Vatican index for all encyclicals...")
         urls = fetch_all_encyclicals()
@@ -159,13 +180,21 @@ def main():
     else:
         with open(STATE_FILE, "r") as f:
             state = json.load(f)
+        if args.refresh:
+            print("Searching vatican.va for new encyclicals...")
+            added = merge_new_urls(state, fetch_all_encyclicals())
+            with open(STATE_FILE, "w") as f:
+                json.dump(state, f)
+            print(f"Queued {len(added)} new encyclical(s).")
+            for url in added:
+                print(f"  + {url}")
 
     queue = state["queue"]
     processed = state["processed"]
     BATCH_SIZE = 300
 
     if processed >= len(queue):
-        print("All encyclicals processed!")
+        print("All encyclicals processed! Run with --refresh to look for new ones.")
         return
 
     print(f"Resuming from index {processed}/{len(queue)}")
@@ -194,11 +223,14 @@ def main():
                     prefix = "  " * (t["level"] - 1)
                     print(f"{prefix}L{t['level']}: {t['text']}")
 
-                subprocess.run(
+                result = subprocess.run(
                     [sys.executable, "vatican_epub_builder.py", "--url", url],
-                    check=True,
                     capture_output=True,
+                    text=True,
                 )
+                if result.returncode != 0:
+                    print(f"Error building EPUB for {url}:\n{result.stderr.strip()}")
+                    continue
                 print(f"-> Successfully built EPUB for {config.TITLE}")
             else:
                 print(f"Failed to find document body for {url}")

@@ -60,10 +60,11 @@ def build_content_fragments(
     )
     raw_children = content.xpath(xpath_query)
 
+    raw_set = set(raw_children)
     children = []
     for c in raw_children:
         # Skip nodes whose ancestor is already in our list (avoid duplication)
-        if any(anc in raw_children for anc in c.iterancestors()):
+        if any(anc in raw_set for anc in c.iterancestors()):
             continue
         # Skip copyright sections
         if any(
@@ -227,10 +228,11 @@ def _collect_fragments(
         # Detect end-of-body markers
         if not has_reached_end:
             text_lower = text.lower()
-            if (
-                text_lower in _SECTION_END_MARKERS
-                or "copyright" in text_lower
-                or "fonti francescane" in text_lower
+            # Only short lines are copyright/source footers; a body paragraph
+            # that merely mentions "copyright" must not end the main text
+            if text_lower in _SECTION_END_MARKERS or (
+                len(text) < 200
+                and ("copyright" in text_lower or "fonti francescane" in text_lower)
             ):
                 has_reached_end = True
 
